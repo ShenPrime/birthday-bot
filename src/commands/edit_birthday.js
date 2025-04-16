@@ -22,7 +22,12 @@ module.exports = {
         .setDescription('The year of your birthday (optional)')
         .setRequired(false)
         .setMinValue(1900)
-        .setMaxValue(new Date().getFullYear())),
+        .setMaxValue(new Date().getFullYear()))
+    .addStringOption(option =>
+      option.setName('timezone')
+        .setDescription('Your timezone (e.g. America/New_York)')
+        .setRequired(false)
+        .setAutocomplete(true)),
   
   async execute(interaction, pool) {
     try {
@@ -34,6 +39,7 @@ module.exports = {
       const day = interaction.options.getInteger('day');
       const month = interaction.options.getInteger('month');
       const year = interaction.options.getInteger('year') || null;
+      const timezone = interaction.options.getString('timezone') || 'UTC';
       
       // Validate date
       if (year) {
@@ -71,9 +77,9 @@ module.exports = {
       // Update birthday
       await pool.query(`
         UPDATE server_${serverId}.birthdays 
-        SET birth_day = $1, birth_month = $2, birth_year = $3, username = $4 
-        WHERE user_id = $5;
-      `, [day, month, year, username, userId]);
+        SET birth_day = $1, birth_month = $2, birth_year = $3, username = $4, timezone = $5 
+        WHERE user_id = $6;
+      `, [day, month, year, username, timezone, userId]);
       
       const yearText = year ? `/${year}` : '';
       await interaction.editReply(`Your birthday has been updated to ${month}/${day}${yearText}.`);

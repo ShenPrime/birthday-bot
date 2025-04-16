@@ -51,6 +51,7 @@ async function createServerSchema(serverId) {
         birth_day INTEGER,
         birth_month INTEGER,
         birth_year INTEGER,
+        timezone TEXT DEFAULT 'UTC',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -106,10 +107,6 @@ async function registerCommands() {
 // Check for birthdays and send announcements
 async function checkBirthdays() {
   try {
-    const today = new Date();
-    const day = today.getDate();
-    const month = today.getMonth() + 1; // JavaScript months are 0-indexed
-
     // Get all servers
     const serversResult = await pool.query('SELECT * FROM servers;');
     
@@ -127,20 +124,31 @@ async function checkBirthdays() {
       
       if (schemaCheck.rows.length === 0) continue;
       
-      // Get birthdays for today
+      // Get all birthdays (not filtered by date yet)
       const birthdaysResult = await pool.query(`
-        SELECT * FROM server_${serverId}.birthdays 
-        WHERE birth_day = $1 AND birth_month = $2;
-      `, [day, month]);
+        SELECT * FROM server_${serverId}.birthdays;
+      `);
       
       if (birthdaysResult.rows.length > 0) {
         const channel = await client.channels.fetch(channelId);
         
         for (const birthday of birthdaysResult.rows) {
-          const age = birthday.birth_year ? today.getFullYear() - birthday.birth_year : null;
-          const ageText = age ? ` They are turning ${age} today!` : '';
+          // Get current date in user's timezone
+          const now = new Date();
+          const userDate = new Date(now.toLocaleString('en-US', {
+            timeZone: birthday.timezone || 'UTC'
+          }));
           
-          await channel.send(`🎉 Happy Birthday to <@${birthday.user_id}>!${ageText} 🎂`);
+          const userDay = userDate.getDate();
+          const userMonth = userDate.getMonth() + 1;
+          
+          // Check if it's the user's birthday in their timezone
+          if (birthday.birth_day === userDay && birthday.birth_month === userMonth) {
+            const age = birthday.birth_year ? userDate.getFullYear() - birthday.birth_year : null;
+            const ageText = age ? ` They are turning ${age} today!` : '';
+            
+            await channel.send(`🎉 Happy Birthday to <@${birthday.user_id}>!${ageText} 🎂`);
+          }
         }
       }
     }
@@ -165,8 +173,64 @@ client.once('ready', async () => {
   });
 });
 
+// Common timezones for autocomplete suggestions
+const commonTimezones = [
+  // UTC
+  'UTC',
+  
+  // North America
+  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+  'America/Phoenix', 'America/Anchorage', 'America/Adak', 'America/Honolulu',
+  'America/Toronto', 'America/Vancouver', 'America/Edmonton', 'America/Halifax',
+  'America/St_Johns', 'America/Mexico_City', 'America/Tijuana', 'America/Monterrey',
+  
+  // South America
+  'America/Sao_Paulo', 'America/Buenos_Aires', 'America/Santiago', 'America/Lima',
+  'America/Bogota', 'America/Caracas', 'America/La_Paz', 'America/Montevideo',
+  
+  // Europe
+  'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Moscow',
+  'Europe/Madrid', 'Europe/Rome', 'Europe/Amsterdam', 'Europe/Brussels',
+  'Europe/Vienna', 'Europe/Stockholm', 'Europe/Oslo', 'Europe/Copenhagen',
+  'Europe/Helsinki', 'Europe/Athens', 'Europe/Istanbul', 'Europe/Warsaw',
+  'Europe/Bucharest', 'Europe/Kiev', 'Europe/Lisbon', 'Europe/Dublin',
+  
+  // Asia
+  'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Singapore', 'Asia/Dubai',
+  'Asia/Hong_Kong', 'Asia/Seoul', 'Asia/Bangkok', 'Asia/Jakarta',
+  'Asia/Manila', 'Asia/Kuala_Lumpur', 'Asia/Taipei', 'Asia/Kolkata',
+  'Asia/Karachi', 'Asia/Tehran', 'Asia/Jerusalem', 'Asia/Baghdad',
+  'Asia/Riyadh', 'Asia/Qatar', 'Asia/Dhaka', 'Asia/Ho_Chi_Minh',
+  
+  // Africa
+  'Africa/Cairo', 'Africa/Lagos', 'Africa/Johannesburg', 'Africa/Nairobi',
+  'Africa/Casablanca', 'Africa/Tunis', 'Africa/Algiers', 'Africa/Khartoum',
+  'Africa/Accra', 'Africa/Addis_Ababa',
+  
+  // Oceania
+  'Australia/Sydney', 'Australia/Melbourne', 'Australia/Brisbane', 'Australia/Perth',
+  'Australia/Adelaide', 'Australia/Darwin', 'Australia/Hobart',
+  'Pacific/Auckland', 'Pacific/Fiji', 'Pacific/Honolulu', 'Pacific/Guam',
+  'Pacific/Samoa', 'Pacific/Tahiti', 'Pacific/Noumea'
+];
+
 // Event: Interaction create
 client.on('interactionCreate', async interaction => {
+  // Handle autocomplete interactions
+  if (interaction.isAutocomplete()) {
+    if (interaction.commandName === 'set_birthday' || interaction.commandName === 'edit_birthday') {
+      const focusedOption = interaction.options.getFocused(true);
+      if (focusedOption.name === 'timezone') {
+        const input = focusedOption.value.toLowerCase();
+        const filtered = commonTimezones.filter(tz => tz.toLowerCase().includes(input));
+        await interaction.respond(
+          filtered.map(tz => ({ name: tz, value: tz })).slice(0, 25)
+        );
+      }
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   const command = client.commands.get(interaction.commandName);
