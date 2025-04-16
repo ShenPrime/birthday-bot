@@ -13,6 +13,9 @@ const client = new Client({
   ]
 });
 
+// Attach the checkAndAnnounceUserBirthday function to the client
+client.checkAndAnnounceUserBirthday = checkAndAnnounceUserBirthday;
+
 // Initialize commands collection
 client.commands = new Collection();
 
@@ -113,6 +116,70 @@ function resetAnnouncedBirthdays() {
   if (now.getUTCHours() === 0 && now.getUTCMinutes() < 5) { // Reset in the first 5 minutes of the day
     console.log('Resetting announced birthdays tracking');
     announcedBirthdays.clear();
+  }
+}
+
+// Function to check if it's a user's birthday and send announcement
+async function checkAndAnnounceUserBirthday(serverId, userId, channelId) {
+  try {
+    // Get user's birthday data
+    const birthdayResult = await pool.query(`
+      SELECT * FROM server_${serverId}.birthdays WHERE user_id = $1;
+    `, [userId]);
+    
+    if (birthdayResult.rows.length === 0) return false;
+    
+    const birthday = birthdayResult.rows[0];
+    
+    // Get current date in user's timezone
+    const now = new Date();
+    const userDate = new Date(now.toLocaleString('en-US', {
+      timeZone: birthday.timezone || 'UTC'
+    }));
+    
+    const userDay = userDate.getDate();
+    const userMonth = userDate.getMonth() + 1;
+    
+    // Create a unique key for this birthday
+    const birthdayKey = `${serverId}-${birthday.user_id}-${userDay}-${userMonth}`;
+    
+    // Check if it's the user's birthday in their timezone and hasn't been announced today
+    if (birthday.birth_day === userDay && birthday.birth_month === userMonth && !announcedBirthdays.has(birthdayKey)) {
+      // Try to fetch the channel
+      let channel;
+      try {
+        channel = await client.channels.fetch(channelId);
+      } catch (error) {
+        console.error(`Error fetching channel ${channelId} for server ${serverId}: ${error.message}`);
+        return false;
+      }
+      
+      // Verify the channel exists and is a text channel
+      if (!channel || !channel.isTextBased()) {
+        console.error(`Channel ${channelId} for server ${serverId} is not accessible or not a text channel`);
+        return false;
+      }
+      
+      const age = birthday.birth_year ? userDate.getFullYear() - birthday.birth_year : null;
+      const ageText = age ? ` They are turning ${age} today!` : '';
+      
+      try {
+        await channel.send(`🎉 Happy Birthday to <@${birthday.user_id}>!${ageText} 🎂`);
+        
+        // Mark this birthday as announced for today
+        announcedBirthdays.set(birthdayKey, true);
+        console.log(`Announced birthday for user ${birthday.user_id} in server ${serverId}`);
+        return true;
+      } catch (error) {
+        console.error(`Error sending birthday message in channel ${channelId} for server ${serverId}: ${error.message}`);
+        return false;
+      }
+    }
+    
+    return false;
+  } catch (error) {
+    console.error(`Error checking birthday for user ${userId} in server ${serverId}:`, error);
+    return false;
   }
 }
 

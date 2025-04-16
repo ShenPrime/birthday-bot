@@ -93,25 +93,26 @@ module.exports = {
         });
       }
       
-      // Check if today is the user's birthday
-      const today = new Date();
-      const todayDay = today.getDate();
-      const todayMonth = today.getMonth() + 1; // JavaScript months are 0-indexed
+      // Check if today is the user's birthday in the user's timezone
+      const now = new Date();
+      const userDate = new Date(now.toLocaleString('en-US', {
+        timeZone: timezone || 'UTC'
+      }));
       
-      if (day === todayDay && month === todayMonth) {
+      const userDay = userDate.getDate();
+      const userMonth = userDate.getMonth() + 1; // JavaScript months are 0-indexed
+      
+      if (day === userDay && month === userMonth) {
         // Get the announcement channel for this server
         const serverInfo = await pool.query('SELECT announcement_channel_id FROM servers WHERE server_id = $1', [serverId]);
         
         if (serverInfo.rows.length > 0 && serverInfo.rows[0].announcement_channel_id) {
           const channelId = serverInfo.rows[0].announcement_channel_id;
-          const channel = await interaction.client.channels.fetch(channelId);
           
-          if (channel) {
-            const age = year ? today.getFullYear() - year : null;
-            const ageText = age ? ` They are turning ${age} today!` : '';
-            
-            await channel.send(`🎉 Happy Birthday to <@${userId}>!${ageText} 🎂`);
-            
+          // Use the shared function to check and announce birthday
+          const announced = await interaction.client.checkAndAnnounceUserBirthday(serverId, userId, channelId);
+          
+          if (announced) {
             // Let the user know their birthday was announced
             await interaction.followUp({ 
               content: `Since today is your birthday, I've sent a birthday announcement to the server!`, 
