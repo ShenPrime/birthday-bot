@@ -145,7 +145,21 @@ async function checkBirthdays() {
       `);
       
       if (birthdaysResult.rows.length > 0) {
-        const channel = await client.channels.fetch(channelId);
+        // Try to fetch the channel, but handle the case where the bot no longer has access
+        let channel;
+        try {
+          channel = await client.channels.fetch(channelId);
+        } catch (error) {
+          console.error(`Error fetching channel ${channelId} for server ${serverId}: ${error.message}`);
+          // Skip this server since we can't access the channel
+          continue;
+        }
+        
+        // Verify the channel exists and is a text channel that we can send messages to
+        if (!channel || !channel.isTextBased()) {
+          console.error(`Channel ${channelId} for server ${serverId} is not accessible or not a text channel`);
+          continue;
+        }
         
         for (const birthday of birthdaysResult.rows) {
           // Get current date in user's timezone
@@ -165,11 +179,15 @@ async function checkBirthdays() {
             const age = birthday.birth_year ? userDate.getFullYear() - birthday.birth_year : null;
             const ageText = age ? ` They are turning ${age} today!` : '';
             
-            await channel.send(`🎉 Happy Birthday to <@${birthday.user_id}>!${ageText} 🎂`);
-            
-            // Mark this birthday as announced for today
-            announcedBirthdays.set(birthdayKey, true);
-            console.log(`Announced birthday for user ${birthday.user_id} in server ${serverId}`);
+            try {
+              await channel.send(`🎉 Happy Birthday to <@${birthday.user_id}>!${ageText} 🎂`);
+              
+              // Mark this birthday as announced for today
+              announcedBirthdays.set(birthdayKey, true);
+              console.log(`Announced birthday for user ${birthday.user_id} in server ${serverId}`);
+            } catch (error) {
+              console.error(`Error sending birthday message in channel ${channelId} for server ${serverId}: ${error.message}`);
+            }
           }
         }
       }
