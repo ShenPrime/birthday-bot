@@ -104,9 +104,24 @@ async function registerCommands() {
   }
 }
 
+// Track announced birthdays to prevent duplicates
+const announcedBirthdays = new Map();
+
+// Reset announced birthdays map at midnight UTC
+function resetAnnouncedBirthdays() {
+  const now = new Date();
+  if (now.getUTCHours() === 0 && now.getUTCMinutes() < 5) { // Reset in the first 5 minutes of the day
+    console.log('Resetting announced birthdays tracking');
+    announcedBirthdays.clear();
+  }
+}
+
 // Check for birthdays and send announcements
 async function checkBirthdays() {
   try {
+    // Reset tracking at midnight UTC if needed
+    resetAnnouncedBirthdays();
+    
     // Get all servers
     const serversResult = await pool.query('SELECT * FROM servers;');
     
@@ -142,12 +157,19 @@ async function checkBirthdays() {
           const userDay = userDate.getDate();
           const userMonth = userDate.getMonth() + 1;
           
-          // Check if it's the user's birthday in their timezone
-          if (birthday.birth_day === userDay && birthday.birth_month === userMonth) {
+          // Create a unique key for this birthday
+          const birthdayKey = `${serverId}-${birthday.user_id}-${userDay}-${userMonth}`;
+          
+          // Check if it's the user's birthday in their timezone and hasn't been announced today
+          if (birthday.birth_day === userDay && birthday.birth_month === userMonth && !announcedBirthdays.has(birthdayKey)) {
             const age = birthday.birth_year ? userDate.getFullYear() - birthday.birth_year : null;
             const ageText = age ? ` They are turning ${age} today!` : '';
             
             await channel.send(`🎉 Happy Birthday to <@${birthday.user_id}>!${ageText} 🎂`);
+            
+            // Mark this birthday as announced for today
+            announcedBirthdays.set(birthdayKey, true);
+            console.log(`Announced birthday for user ${birthday.user_id} in server ${serverId}`);
           }
         }
       }
@@ -167,10 +189,12 @@ client.once('ready', async () => {
   // Register commands
   await registerCommands();
   
-  // Schedule birthday check every day at midnight
-  cron.schedule('0 0 * * *', () => {
+  // Schedule birthday check every hour
+  cron.schedule('0 * * * *', () => {
     checkBirthdays();
   });
+  
+  console.log('Birthday checks scheduled to run hourly');
 });
 
 // Common timezones for autocomplete suggestions
