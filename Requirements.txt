@@ -1,0 +1,9 @@
+Discord Birthday Bot: 
+
+Requirements: 
+- users are able to set their birthdays via /set_birthday command. It takes in day, month, and year as parameters
+- users can edit/delete their birthdays via /delete_birthday command or /edit_birthday command
+- bot announces user birthdays on the days 
+- ability to view a list of all registered user birthdays via /list_birthdays command
+- There should be seperate schemas in the database for each server the bot is used in that are initialzed upon first setup via /setup_birthday_boi command 
+- Bot should save all data in a postgres DB 
