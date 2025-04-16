@@ -275,7 +275,7 @@ client.once('ready', async () => {
   await registerCommands();
   
   // Schedule birthday check every hour
-  cron.schedule('0/5 * * * *', () => {
+  cron.schedule('0 * * * *', () => {
     checkBirthdays();
   });
   
