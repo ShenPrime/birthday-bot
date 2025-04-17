@@ -39,7 +39,15 @@ module.exports = {
       const day = interaction.options.getInteger('day');
       const month = interaction.options.getInteger('month');
       const year = interaction.options.getInteger('year') || null;
-      const timezone = interaction.options.getString('timezone') || 'UTC';
+      const rawTimezone = interaction.options.getString('timezone') || 'UTC';
+      const timezone = rawTimezone.toLowerCase();
+      
+      // Validate timezone against known timezones
+      const commonTimezones = interaction.client.commonTimezones || [];
+      const isValidTimezone = commonTimezones.some(tz => tz.toLowerCase() === timezone);
+      if (rawTimezone !== 'UTC' && !isValidTimezone) {
+        return await interaction.editReply('Invalid timezone provided! Please select from the autocomplete list.');
+      }
       
       // Validate date
       if (year) {
@@ -110,9 +118,18 @@ module.exports = {
       
       // Check if today is the user's birthday in the user's timezone
       const now = new Date();
-      const userDate = new Date(now.toLocaleString('en-US', {
-        timeZone: timezone || 'UTC'
-      }));
+      
+      // Safely handle timezone conversion with error handling
+      function getLocalizedDate(date, tz) {
+        try {
+          return new Date(date.toLocaleString('en-US', { timeZone: tz }));
+        } catch (e) {
+          console.error(`Error with timezone ${tz}, falling back to UTC:`, e);
+          return new Date(date.toLocaleString('en-US', { timeZone: 'utc' }));
+        }
+      }
+      
+      const userDate = getLocalizedDate(now, timezone);
       
       const userDay = userDate.getDate();
       const userMonth = userDate.getMonth() + 1; // JavaScript months are 0-indexed

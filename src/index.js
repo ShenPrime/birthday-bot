@@ -134,7 +134,7 @@ async function checkAndAnnounceUserBirthday(serverId, userId, channelId) {
     // Get current date in user's timezone
     const now = new Date();
     const userDate = new Date(now.toLocaleString('en-US', {
-      timeZone: birthday.timezone || 'UTC'
+      timeZone: (birthday.timezone || 'UTC').toLowerCase()
     }));
     
     const userDay = userDate.getDate();
@@ -232,7 +232,7 @@ async function checkBirthdays() {
           // Get current date in user's timezone
           const now = new Date();
           const userDate = new Date(now.toLocaleString('en-US', {
-            timeZone: birthday.timezone || 'UTC'
+            timeZone: (birthday.timezone || 'UTC').toLowerCase()
           }));
           
           const userDay = userDate.getDate();
@@ -322,6 +322,9 @@ const commonTimezones = [
   'Pacific/Auckland', 'Pacific/Fiji', 'Pacific/Honolulu', 'Pacific/Guam',
   'Pacific/Samoa', 'Pacific/Tahiti', 'Pacific/Noumea'
 ];
+
+// Make timezones accessible to command files
+client.commonTimezones = commonTimezones;
 
 // Event: Interaction create
 client.on('interactionCreate', async interaction => {
