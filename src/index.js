@@ -212,6 +212,8 @@ async function checkBirthdays() {
         SELECT * FROM server_${serverId}.birthdays;
       `);
       
+      console.log(`Found ${birthdaysResult.rows.length} birthday records for server ${serverId}.`); // Add this log
+
       if (birthdaysResult.rows.length > 0) {
         // Try to fetch the channel, but handle the case where the bot no longer has access
         let channel;
