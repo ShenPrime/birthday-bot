@@ -186,6 +186,7 @@ async function checkAndAnnounceUserBirthday(serverId, userId, channelId) {
 // Check for birthdays and send announcements
 async function checkBirthdays() {
   try {
+    const now = new Date(); // Define 'now' here
     // Reset tracking at midnight UTC if needed
     resetAnnouncedBirthdays();
     
@@ -229,7 +230,7 @@ async function checkBirthdays() {
         }
         
         for (const birthday of birthdaysResult.rows) {
-          // Get current date in user's timezone          const now = new Date();
+          // Get current date in user's timezone          // const now = new Date(); <-- Remove this line
           let userDate;
           try {
             // Attempt to get date in user's specified timezone
@@ -290,7 +291,7 @@ client.once('ready', async () => {
   await registerCommands();
   
   // Schedule birthday check every hour
-  cron.schedule('0 * * * *', () => {
+  cron.schedule('0/1 * * * *', () => {
     checkBirthdays();
   });
   
