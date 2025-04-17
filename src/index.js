@@ -5,6 +5,21 @@ const path = require('path');
 const { Pool } = require('pg');
 const cron = require('node-cron');
 
+// --- Global Error Handlers ---
+process.on('uncaughtException', (error) => {
+  console.error('--- UNCAUGHT EXCEPTION ---');
+  console.error(error);
+  process.exit(1); // Exit after logging
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('--- UNHANDLED REJECTION ---');
+  console.error('Reason:', reason);
+  // console.error('Promise:', promise); // Uncomment for more details if needed
+  process.exit(1); // Exit after logging
+});
+// -----------------------------
+
 // Initialize Discord client
 const client = new Client({
   intents: [
@@ -185,6 +200,7 @@ async function checkAndAnnounceUserBirthday(serverId, userId, channelId) {
 
 // Check for birthdays and send announcements
 async function checkBirthdays() {
+  console.log('--- Entering checkBirthdays function ---'); // Add this log
   try {
     const now = new Date(); // Define 'now' here
     // Reset tracking at midnight UTC if needed
@@ -292,13 +308,16 @@ client.once('ready', async () => {
   // Register commands
   await registerCommands();
   
-  // Schedule birthday check every hour
-  cron.schedule('0/5 * * * *', () => {
-    console.log('Running hourly birthday check...'); // Add this log
+  // Schedule birthday check every minute
+  console.log('Attempting to schedule cron job...'); // Add this log
+  cron.schedule('0 * * * *', () => {
+    console.log('--- Cron job triggered ---'); // Add this log
+    console.log('Running hourly birthday check...'); // Corrected log message
     checkBirthdays();
   });
+  console.log('Cron job scheduled successfully.'); // Add this log
   
-  console.log('Birthday checks scheduled to run hourly');
+  console.log('Birthday checks scheduled to run every hour.');
 });
 
 // Common timezones for autocomplete suggestions
