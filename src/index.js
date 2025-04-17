@@ -292,6 +292,7 @@ client.once('ready', async () => {
   
   // Schedule birthday check every hour
   cron.schedule('0/1 * * * *', () => {
+    console.log('Running hourly birthday check...'); // Add this log
     checkBirthdays();
   });
   
