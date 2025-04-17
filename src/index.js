@@ -229,11 +229,24 @@ async function checkBirthdays() {
         }
         
         for (const birthday of birthdaysResult.rows) {
-          // Get current date in user's timezone
-          const now = new Date();
-          const userDate = new Date(now.toLocaleString('en-US', {
-            timeZone: (birthday.timezone || 'UTC').toLowerCase()
-          }));
+          // Get current date in user's timezone          const now = new Date();
+          let userDate;
+          try {
+            // Attempt to get date in user's specified timezone
+            userDate = new Date(now.toLocaleString('en-US', {
+              timeZone: birthday.timezone || 'UTC' // Use the stored timezone directly
+            }));
+          } catch (error) {
+            // Handle invalid timezone identifier
+            if (error instanceof RangeError) {
+              console.warn(`Invalid timezone '${birthday.timezone}' for user ${birthday.user_id} in server ${serverId}. Defaulting to UTC.`);
+              userDate = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' })); // Fallback to UTC
+            } else {
+              // Re-throw other unexpected errors
+              console.error(`Unexpected error getting user date for ${birthday.user_id} in server ${serverId}:`, error);
+              continue; // Skip this user if we can't determine their date
+            }
+          }
           
           const userDay = userDate.getDate();
           const userMonth = userDate.getMonth() + 1;
@@ -252,8 +265,10 @@ async function checkBirthdays() {
               // Mark this birthday as announced for today
               announcedBirthdays.set(birthdayKey, true);
               console.log(`Announced birthday for user ${birthday.user_id} in server ${serverId}`);
-            } catch (error) {
-              console.error(`Error sending birthday message in channel ${channelId} for server ${serverId}: ${error.message}`);
+            } catch (sendError) {
+              // Log specific errors related to sending messages (e.g., permissions)
+              console.error(`Error sending birthday message for user ${birthday.user_id} in channel ${channelId} (Server: ${serverId}): ${sendError.message}`);
+              // No need to 'continue' here, just log the error and proceed to the next user
             }
           }
         }
