@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
 const cron = require('node-cron');
+const { getLocalizedDate, generateBirthdayKey, shouldCleanupEntry } = require('./utils/dateUtils');
 
 // --- Global Error Handlers ---
 process.on('uncaughtException', (error) => {
@@ -126,13 +127,13 @@ async function registerCommands() {
 const announcedBirthdays = new Map();
 
 // Clean up old entries from announced birthdays map (entries older than 2 days)
+const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
+
 function cleanupAnnouncedBirthdays() {
-  const now = Date.now();
-  const twoDaysMs = 2 * 24 * 60 * 60 * 1000;
   let cleanedCount = 0;
 
   for (const [key, timestamp] of announcedBirthdays.entries()) {
-    if (now - timestamp > twoDaysMs) {
+    if (shouldCleanupEntry(timestamp, TWO_DAYS_MS)) {
       announcedBirthdays.delete(key);
       cleanedCount++;
     }
@@ -157,16 +158,14 @@ async function checkAndAnnounceUserBirthday(serverId, userId, channelId) {
     
     // Get current date in user's timezone
     const now = new Date();
-    const userDate = new Date(now.toLocaleString('en-US', {
-      timeZone: birthday.timezone || 'UTC'
-    }));
-    
+    const userDate = getLocalizedDate(now, birthday.timezone || 'UTC');
+
     const userYear = userDate.getFullYear();
     const userMonth = userDate.getMonth() + 1;
     const userDay = userDate.getDate();
 
     // Create a unique key for this birthday (includes full date so each calendar day is unique)
-    const birthdayKey = `${serverId}-${birthday.user_id}-${userYear}-${userMonth}-${userDay}`;
+    const birthdayKey = generateBirthdayKey(serverId, birthday.user_id, userYear, userMonth, userDay);
     
     // Check if it's the user's birthday in their timezone and hasn't been announced today
     if (birthday.birth_day === userDay && birthday.birth_month === userMonth && !announcedBirthdays.has(birthdayKey)) {
@@ -258,31 +257,15 @@ async function checkBirthdays() {
         }
         
         for (const birthday of birthdaysResult.rows) {
-          // Get current date in user's timezone          // const now = new Date(); <-- Remove this line
-          let userDate;
-          try {
-            // Attempt to get date in user's specified timezone
-            userDate = new Date(now.toLocaleString('en-US', {
-              timeZone: birthday.timezone || 'UTC' // Use the stored timezone directly
-            }));
-          } catch (error) {
-            // Handle invalid timezone identifier
-            if (error instanceof RangeError) {
-              console.warn(`Invalid timezone '${birthday.timezone}' for user ${birthday.user_id} in server ${serverId}. Defaulting to UTC.`);
-              userDate = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' })); // Fallback to UTC
-            } else {
-              // Re-throw other unexpected errors
-              console.error(`Unexpected error getting user date for ${birthday.user_id} in server ${serverId}:`, error);
-              continue; // Skip this user if we can't determine their date
-            }
-          }
-          
+          // Get current date in user's timezone (falls back to UTC if invalid)
+          const userDate = getLocalizedDate(now, birthday.timezone || 'UTC');
+
           const userYear = userDate.getFullYear();
           const userMonth = userDate.getMonth() + 1;
           const userDay = userDate.getDate();
 
           // Create a unique key for this birthday (includes full date so each calendar day is unique)
-          const birthdayKey = `${serverId}-${birthday.user_id}-${userYear}-${userMonth}-${userDay}`;
+          const birthdayKey = generateBirthdayKey(serverId, birthday.user_id, userYear, userMonth, userDay);
           
           // Check if it's the user's birthday in their timezone and hasn't been announced today
           if (birthday.birth_day === userDay && birthday.birth_month === userMonth && !announcedBirthdays.has(birthdayKey)) {

@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { assignZodiacRole } = require('../utils/zodiacUtils');
+const { getLocalizedDate, isValidDate } = require('../utils/dateUtils');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -51,17 +52,8 @@ module.exports = {
       const timezone = matchedTimezone || rawTimezone;
       
       // Validate date
-      if (year) {
-        const date = new Date(year, month - 1, day);
-        if (date.getDate() !== day || date.getMonth() !== month - 1 || date.getFullYear() !== year) {
-          return await interaction.editReply('Invalid date. Please provide a valid date.');
-        }
-      } else {
-        // Just validate day/month combination
-        const daysInMonth = new Date(new Date().getFullYear(), month, 0).getDate();
-        if (day > daysInMonth) {
-          return await interaction.editReply(`Invalid date. The month ${month} only has ${daysInMonth} days.`);
-        }
+      if (!isValidDate(day, month, year)) {
+        return await interaction.editReply('Invalid date. Please provide a valid date.');
       }
       
       // Check if schema exists for this server
@@ -119,17 +111,6 @@ module.exports = {
       
       // Check if today is the user's birthday in the user's timezone
       const now = new Date();
-      
-      // Safely handle timezone conversion with error handling
-      function getLocalizedDate(date, tz) {
-        try {
-          return new Date(date.toLocaleString('en-US', { timeZone: tz }));
-        } catch (e) {
-          console.error(`Error with timezone ${tz}, falling back to UTC:`, e);
-          return new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
-        }
-      }
-      
       const userDate = getLocalizedDate(now, timezone);
       
       const userDay = userDate.getDate();

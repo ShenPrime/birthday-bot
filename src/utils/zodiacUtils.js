@@ -202,6 +202,7 @@ function getZodiacColor(sign) {
 
 module.exports = {
   getZodiacSign,
+  getZodiacColor,
   ensureZodiacRoles,
   assignZodiacRole,
   removeZodiacRoles
