@@ -40,14 +40,15 @@ module.exports = {
       const month = interaction.options.getInteger('month');
       const year = interaction.options.getInteger('year') || null;
       const rawTimezone = interaction.options.getString('timezone') || 'UTC';
-      const timezone = rawTimezone.toLowerCase();
-      
-      // Validate timezone against known timezones
+
+      // Validate timezone against known timezones (case-insensitive) and get the correctly-cased version
       const commonTimezones = interaction.client.commonTimezones || [];
-      const isValidTimezone = commonTimezones.some(tz => tz.toLowerCase() === timezone);
-      if (rawTimezone !== 'UTC' && !isValidTimezone) {
+      const matchedTimezone = commonTimezones.find(tz => tz.toLowerCase() === rawTimezone.toLowerCase());
+      if (rawTimezone !== 'UTC' && !matchedTimezone) {
         return await interaction.editReply('Invalid timezone provided! Please select from the autocomplete list.');
       }
+      // Use the correctly-cased timezone (IANA identifiers are case-sensitive)
+      const timezone = matchedTimezone || rawTimezone;
       
       // Validate date
       if (year) {
@@ -110,7 +111,7 @@ module.exports = {
           return new Date(date.toLocaleString('en-US', { timeZone: tz }));
         } catch (e) {
           console.error(`Error with timezone ${tz}, falling back to UTC:`, e);
-          return new Date(date.toLocaleString('en-US', { timeZone: 'utc' }));
+          return new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
         }
       }
       

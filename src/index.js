@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, REST, Routes, Events } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
@@ -125,12 +125,21 @@ async function registerCommands() {
 // Track announced birthdays to prevent duplicates
 const announcedBirthdays = new Map();
 
-// Reset announced birthdays map at midnight UTC
-function resetAnnouncedBirthdays() {
-  const now = new Date();
-  if (now.getUTCHours() === 0 && now.getUTCMinutes() < 5) { // Reset in the first 5 minutes of the day
-    console.log('Resetting announced birthdays tracking');
-    announcedBirthdays.clear();
+// Clean up old entries from announced birthdays map (entries older than 2 days)
+function cleanupAnnouncedBirthdays() {
+  const now = Date.now();
+  const twoDaysMs = 2 * 24 * 60 * 60 * 1000;
+  let cleanedCount = 0;
+
+  for (const [key, timestamp] of announcedBirthdays.entries()) {
+    if (now - timestamp > twoDaysMs) {
+      announcedBirthdays.delete(key);
+      cleanedCount++;
+    }
+  }
+
+  if (cleanedCount > 0) {
+    console.log(`Cleaned up ${cleanedCount} old birthday announcement records`);
   }
 }
 
@@ -149,14 +158,15 @@ async function checkAndAnnounceUserBirthday(serverId, userId, channelId) {
     // Get current date in user's timezone
     const now = new Date();
     const userDate = new Date(now.toLocaleString('en-US', {
-      timeZone: (birthday.timezone || 'UTC').toLowerCase()
+      timeZone: birthday.timezone || 'UTC'
     }));
     
-    const userDay = userDate.getDate();
+    const userYear = userDate.getFullYear();
     const userMonth = userDate.getMonth() + 1;
-    
-    // Create a unique key for this birthday
-    const birthdayKey = `${serverId}-${birthday.user_id}-${userDay}-${userMonth}`;
+    const userDay = userDate.getDate();
+
+    // Create a unique key for this birthday (includes full date so each calendar day is unique)
+    const birthdayKey = `${serverId}-${birthday.user_id}-${userYear}-${userMonth}-${userDay}`;
     
     // Check if it's the user's birthday in their timezone and hasn't been announced today
     if (birthday.birth_day === userDay && birthday.birth_month === userMonth && !announcedBirthdays.has(birthdayKey)) {
@@ -181,8 +191,8 @@ async function checkAndAnnounceUserBirthday(serverId, userId, channelId) {
       try {
         await channel.send(`🎉 Happy Birthday to <@${birthday.user_id}>!${ageText} 🎂`);
         
-        // Mark this birthday as announced for today
-        announcedBirthdays.set(birthdayKey, true);
+        // Mark this birthday as announced (store timestamp for cleanup)
+        announcedBirthdays.set(birthdayKey, Date.now());
         console.log(`Announced birthday for user ${birthday.user_id} in server ${serverId}`);
         return true;
       } catch (error) {
@@ -203,8 +213,8 @@ async function checkBirthdays() {
   console.log('--- Entering checkBirthdays function ---'); // Add this log
   try {
     const now = new Date(); // Define 'now' here
-    // Reset tracking at midnight UTC if needed
-    resetAnnouncedBirthdays();
+    // Clean up old tracking entries to prevent memory bloat
+    cleanupAnnouncedBirthdays();
     
     // Get all servers
     const serversResult = await pool.query('SELECT * FROM servers;');
@@ -267,11 +277,12 @@ async function checkBirthdays() {
             }
           }
           
-          const userDay = userDate.getDate();
+          const userYear = userDate.getFullYear();
           const userMonth = userDate.getMonth() + 1;
-          
-          // Create a unique key for this birthday
-          const birthdayKey = `${serverId}-${birthday.user_id}-${userDay}-${userMonth}`;
+          const userDay = userDate.getDate();
+
+          // Create a unique key for this birthday (includes full date so each calendar day is unique)
+          const birthdayKey = `${serverId}-${birthday.user_id}-${userYear}-${userMonth}-${userDay}`;
           
           // Check if it's the user's birthday in their timezone and hasn't been announced today
           if (birthday.birth_day === userDay && birthday.birth_month === userMonth && !announcedBirthdays.has(birthdayKey)) {
@@ -281,8 +292,8 @@ async function checkBirthdays() {
             try {
               await channel.send(`🎉 Happy Birthday to <@${birthday.user_id}>!${ageText} 🎂`);
               
-              // Mark this birthday as announced for today
-              announcedBirthdays.set(birthdayKey, true);
+              // Mark this birthday as announced (store timestamp for cleanup)
+              announcedBirthdays.set(birthdayKey, Date.now());
               console.log(`Announced birthday for user ${birthday.user_id} in server ${serverId}`);
             } catch (sendError) {
               // Log specific errors related to sending messages (e.g., permissions)
@@ -299,7 +310,7 @@ async function checkBirthdays() {
 }
 
 // Event: Client ready
-client.once('ready', async () => {
+client.once(Events.ClientReady, async () => {
   console.log(`Logged in as ${client.user.tag}`);
   
   // Initialize database
@@ -365,7 +376,7 @@ const commonTimezones = [
 client.commonTimezones = commonTimezones;
 
 // Event: Interaction create
-client.on('interactionCreate', async interaction => {
+client.on(Events.InteractionCreate, async interaction => {
   // Handle autocomplete interactions
   if (interaction.isAutocomplete()) {
     if (interaction.commandName === 'set_birthday' || interaction.commandName === 'edit_birthday') {
