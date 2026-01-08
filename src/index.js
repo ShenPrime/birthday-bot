@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
 const cron = require('node-cron');
-const { getLocalizedDate, generateBirthdayKey, shouldCleanupEntry } = require('./utils/dateUtils');
+const { getLocalizedDate } = require('./utils/dateUtils');
 
 // --- Global Error Handlers ---
 process.on('uncaughtException', (error) => {
@@ -71,9 +71,11 @@ async function createServerSchema(serverId) {
         birth_month INTEGER,
         birth_year INTEGER,
         timezone TEXT DEFAULT 'UTC',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_announced_date TEXT
       );
     `);
+
     console.log(`Schema and tables created for server ${serverId}`);
     return true;
   } catch (error) {
@@ -123,27 +125,6 @@ async function registerCommands() {
   }
 }
 
-// Track announced birthdays to prevent duplicates
-const announcedBirthdays = new Map();
-
-// Clean up old entries from announced birthdays map (entries older than 2 days)
-const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
-
-function cleanupAnnouncedBirthdays() {
-  let cleanedCount = 0;
-
-  for (const [key, timestamp] of announcedBirthdays.entries()) {
-    if (shouldCleanupEntry(timestamp, TWO_DAYS_MS)) {
-      announcedBirthdays.delete(key);
-      cleanedCount++;
-    }
-  }
-
-  if (cleanedCount > 0) {
-    console.log(`Cleaned up ${cleanedCount} old birthday announcement records`);
-  }
-}
-
 // Function to check if it's a user's birthday and send announcement
 async function checkAndAnnounceUserBirthday(serverId, userId, channelId) {
   try {
@@ -164,11 +145,13 @@ async function checkAndAnnounceUserBirthday(serverId, userId, channelId) {
     const userMonth = userDate.getMonth() + 1;
     const userDay = userDate.getDate();
 
-    // Create a unique key for this birthday (includes full date so each calendar day is unique)
-    const birthdayKey = generateBirthdayKey(serverId, birthday.user_id, userYear, userMonth, userDay);
-    
+    // Create today's date string for comparison (YYYY-MM-DD format)
+    const todayDateStr = `${userYear}-${String(userMonth).padStart(2, '0')}-${String(userDay).padStart(2, '0')}`;
+
     // Check if it's the user's birthday in their timezone and hasn't been announced today
-    if (birthday.birth_day === userDay && birthday.birth_month === userMonth && !announcedBirthdays.has(birthdayKey)) {
+    const alreadyAnnounced = birthday.last_announced_date === todayDateStr;
+
+    if (birthday.birth_day === userDay && birthday.birth_month === userMonth && !alreadyAnnounced) {
       // Try to fetch the channel
       let channel;
       try {
@@ -177,21 +160,26 @@ async function checkAndAnnounceUserBirthday(serverId, userId, channelId) {
         console.error(`Error fetching channel ${channelId} for server ${serverId}: ${error.message}`);
         return false;
       }
-      
+
       // Verify the channel exists and is a text channel
       if (!channel || !channel.isTextBased()) {
         console.error(`Channel ${channelId} for server ${serverId} is not accessible or not a text channel`);
         return false;
       }
-      
+
       const age = birthday.birth_year ? userDate.getFullYear() - birthday.birth_year : null;
       const ageText = age ? ` They are turning ${age} today!` : '';
-      
+
       try {
         await channel.send(`🎉 Happy Birthday to <@${birthday.user_id}>!${ageText} 🎂`);
-        
-        // Mark this birthday as announced (store timestamp for cleanup)
-        announcedBirthdays.set(birthdayKey, Date.now());
+
+        // Mark this birthday as announced in the database
+        await pool.query(`
+          UPDATE server_${serverId}.birthdays
+          SET last_announced_date = $1
+          WHERE user_id = $2;
+        `, [todayDateStr, birthday.user_id]);
+
         console.log(`Announced birthday for user ${birthday.user_id} in server ${serverId}`);
         return true;
       } catch (error) {
@@ -209,35 +197,44 @@ async function checkAndAnnounceUserBirthday(serverId, userId, channelId) {
 
 // Check for birthdays and send announcements
 async function checkBirthdays() {
-  console.log('--- Entering checkBirthdays function ---'); // Add this log
+  console.log('--- Entering checkBirthdays function ---');
   try {
-    const now = new Date(); // Define 'now' here
-    // Clean up old tracking entries to prevent memory bloat
-    cleanupAnnouncedBirthdays();
-    
+    const now = new Date();
+
     // Get all servers
     const serversResult = await pool.query('SELECT * FROM servers;');
     
     for (const server of serversResult.rows) {
       const serverId = server.server_id;
       const channelId = server.announcement_channel_id;
-      
+
       if (!channelId) continue;
-      
+
+      // Check if bot is still in the server
+      let guild;
+      try {
+        guild = await client.guilds.fetch(serverId);
+      } catch (error) {
+        // Bot is no longer in this server, skip silently
+        continue;
+      }
+
+      const serverName = guild.name;
+
       // Check if schema exists
       const schemaCheck = await pool.query(`
-        SELECT schema_name FROM information_schema.schemata 
+        SELECT schema_name FROM information_schema.schemata
         WHERE schema_name = 'server_${serverId}';
       `);
-      
+
       if (schemaCheck.rows.length === 0) continue;
-      
+
       // Get all birthdays (not filtered by date yet)
       const birthdaysResult = await pool.query(`
         SELECT * FROM server_${serverId}.birthdays;
       `);
-      
-      console.log(`Found ${birthdaysResult.rows.length} birthday records for server ${serverId}.`); // Add this log
+
+      console.log(`Found ${birthdaysResult.rows.length} birthday records for server "${serverName}".`);
 
       if (birthdaysResult.rows.length > 0) {
         // Try to fetch the channel, but handle the case where the bot no longer has access
@@ -245,14 +242,30 @@ async function checkBirthdays() {
         try {
           channel = await client.channels.fetch(channelId);
         } catch (error) {
-          console.error(`Error fetching channel ${channelId} for server ${serverId}: ${error.message}`);
-          // Skip this server since we can't access the channel
+          console.error(`Error fetching channel ${channelId} for server "${serverName}": ${error.message}`);
+
+          // Try to notify admins via an accessible channel
+          try {
+            const fallbackChannel = guild.systemChannel ||
+              guild.channels.cache.find(ch => ch.isTextBased() && ch.permissionsFor(guild.members.me)?.has('SendMessages'));
+
+            if (fallbackChannel) {
+              await fallbackChannel.send(
+                `⚠️ I can't access the birthday announcement channel (<#${channelId}>). ` +
+                `Please check my permissions or run \`/setup_birthday_boi\` to set a new channel.`
+              );
+              console.log(`Sent access warning to fallback channel in server "${serverName}"`);
+            }
+          } catch (fallbackError) {
+            console.error(`Could not send fallback message for server "${serverName}": ${fallbackError.message}`);
+          }
+
           continue;
         }
-        
+
         // Verify the channel exists and is a text channel that we can send messages to
         if (!channel || !channel.isTextBased()) {
-          console.error(`Channel ${channelId} for server ${serverId} is not accessible or not a text channel`);
+          console.error(`Channel ${channelId} for server "${serverName}" is not accessible or not a text channel`);
           continue;
         }
         
@@ -264,24 +277,30 @@ async function checkBirthdays() {
           const userMonth = userDate.getMonth() + 1;
           const userDay = userDate.getDate();
 
-          // Create a unique key for this birthday (includes full date so each calendar day is unique)
-          const birthdayKey = generateBirthdayKey(serverId, birthday.user_id, userYear, userMonth, userDay);
-          
+          // Create today's date string for comparison (YYYY-MM-DD format)
+          const todayDateStr = `${userYear}-${String(userMonth).padStart(2, '0')}-${String(userDay).padStart(2, '0')}`;
+
           // Check if it's the user's birthday in their timezone and hasn't been announced today
-          if (birthday.birth_day === userDay && birthday.birth_month === userMonth && !announcedBirthdays.has(birthdayKey)) {
+          const alreadyAnnounced = birthday.last_announced_date === todayDateStr;
+
+          if (birthday.birth_day === userDay && birthday.birth_month === userMonth && !alreadyAnnounced) {
             const age = birthday.birth_year ? userDate.getFullYear() - birthday.birth_year : null;
             const ageText = age ? ` They are turning ${age} today!` : '';
-            
+
             try {
               await channel.send(`🎉 Happy Birthday to <@${birthday.user_id}>!${ageText} 🎂`);
-              
-              // Mark this birthday as announced (store timestamp for cleanup)
-              announcedBirthdays.set(birthdayKey, Date.now());
-              console.log(`Announced birthday for user ${birthday.user_id} in server ${serverId}`);
+
+              // Mark this birthday as announced in the database
+              await pool.query(`
+                UPDATE server_${serverId}.birthdays
+                SET last_announced_date = $1
+                WHERE user_id = $2;
+              `, [todayDateStr, birthday.user_id]);
+
+              console.log(`Announced birthday for user ${birthday.user_id} in server "${serverName}"`);
             } catch (sendError) {
               // Log specific errors related to sending messages (e.g., permissions)
-              console.error(`Error sending birthday message for user ${birthday.user_id} in channel ${channelId} (Server: ${serverId}): ${sendError.message}`);
-              // No need to 'continue' here, just log the error and proceed to the next user
+              console.error(`Error sending birthday message for user ${birthday.user_id} in server "${serverName}": ${sendError.message}`);
             }
           }
         }
@@ -302,14 +321,14 @@ client.once(Events.ClientReady, async () => {
   // Register commands
   await registerCommands();
   
-  // Schedule birthday check every minute
-  console.log('Attempting to schedule cron job...'); // Add this log
+  // Schedule hourly birthday check
+  console.log('Attempting to schedule cron job...');
   cron.schedule('0 * * * *', () => {
-    console.log('--- Cron job triggered ---'); // Add this log
-    console.log('Running hourly birthday check...'); // Corrected log message
+    console.log('--- Cron job triggered ---');
+    console.log('Running hourly birthday check...');
     checkBirthdays();
   });
-  console.log('Cron job scheduled successfully.'); // Add this log
+  console.log('Cron job scheduled successfully.');
   
   console.log('Birthday checks scheduled to run every hour.');
 });
